@@ -1,0 +1,268 @@
+---
+title: "Capstone Project Tasks"
+author: "Luis Talavera"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r echo=FALSE, message=FALSE}
+library(tidyverse)
+library(tidytext)
+library(sentimentr) 
+library(R.utils)
+library(wordcloud)
+library(RColorBrewer)
+```
+
+
+## Summary
+
+This file will document the progress on the final project to build a predictive text model of the Johns Hopkins University data science specialization. 
+
+## Task 0: Understanding the problem 
+Tasks to accomplish
+
+Obtaining the data - Can you download the [data](https://d396qusza40orc.cloudfront.net/dsscapstone/dataset/Coursera-SwiftKey.zip) and load/manipulate it in R?
+
+Familiarizing yourself with NLP and text mining - Learn about the basics of natural language processing and how it relates to the data science process you have learned in the Data Science Specialization.
+
+Questions to consider
+
+1. What do the data look like?
+
+2. Where do the data come from?
+
+3. Can you think of any other data sources that might help you in this project?
+
+4. What are the common steps in natural language processing?
+
+5. What are some common issues in the analysis of text data?
+
+6. What is the relationship between NLP and the concepts you have learned in the Specialization?
+
+## Task 1: Getting and cleaning data
+Tasks to accomplish
+
+Tokenization - identifying appropriate tokens such as words, punctuation, and numbers. Writing a function that takes a file as input and returns a tokenized version of it.
+
+Profanity filtering - removing profanity and other words you do not want to predict.
+
+```{r get_data}
+zip_url <- "https://d396qusza40orc.cloudfront.net/dsscapstone/dataset/Coursera-SwiftKey.zip"
+zip_file <- "Coursera-Swiftkey.zip"
+data_dir <- "./data/final"
+
+if(!file.exists(paste0("./data/", zip_file))) {
+  download(zip_url)
+}
+
+if(!file.exists(data_dir)) {
+  setwd("./data")
+  unzip(zip_file)
+  setwd("../")
+}
+
+```
+
+```{r subset_data}
+
+sample_text <- function(file_name, output_name) {
+  set.seed(1234)
+  
+  lines <- scan(file_name, character(0), sep = "\n") # separate each line
+  n_lines <- as.numeric(countLines(file_name))
+  
+  conn <- file(file_name, "r") 
+  lines <- readLines(conn, (n_lines/1000), encoding="UTF-8")
+  
+  # Fix wrong file encoding
+  fixed <- iconv(lines, from = "UTF-8", to = "Windows-1252")
+  Encoding(fixed) <- "UTF-8"
+  
+  selected_lines <- rbinom(1000, n_lines, 0.5)
+  subset_text <- fixed[selected_lines]
+  
+  writeLines(lines, con=output_name, "\n")
+  close(conn)
+}
+
+if(!file.exists(paste0(data_dir, "/en_US/en_US_sample.twitter.txt"))) {
+  sample_text(paste0(data_dir, "/en_US/en_US.twitter.txt"), 
+              paste0(data_dir, "/en_US/en_US_sample.twitter.txt"))
+  
+}
+
+```
+
+```{r data_structure}
+# Create a list to store all data transformations
+data <- list()
+```
+
+
+```{r tokenize_clean_data}
+conn <- file(paste0(data_dir, "/en_US/en_US_sample.twitter.txt"), "r") 
+lines <- readLines(conn,encoding="latin1")
+close(conn)
+
+data$text_tibble <- tibble(line = 1:length(lines), text = lines)
+data$original <- data$text_tibble %>% 
+                 unnest_tokens(token, text) %>%
+                 # Replace na tokens with blank str
+                 mutate(word = if_else(is.na(token), "", token))
+
+# Remove stopwords
+data$wo_stepwords <- data$original %>%
+                     anti_join(stop_words, by=c("token"="word"))
+```
+
+```{r profanity_filtering, warning=FALSE}
+# Using sentimentr
+data$sentences <- get_sentences(lines)
+
+profanity_terms <- extract_profanity_terms(data$sentences) # names: neutal, profanity, sentence
+
+profane_words <- unique(unlist(profanity_terms$profanity))
+
+# Filter profanity
+data$wo_profanity <- data$wo_stepwords %>%
+                     filter(!word %in% profane_words)
+```
+
+## Exploratory Analysis
+### 1-gram
+```{r word frequency}
+wf <- count(data$wo_profanity, word, sort = TRUE)
+wf10 <- head(wf,10)
+
+ggplot(wf10, aes(x=reorder(word, n), y=n, fill = word)) +
+  geom_bar(stat='identity', show.legend = FALSE) +
+  coord_flip() +
+  xlab("Word")
+```
+
+```{r wordcloud}
+set.seed(1234)
+wordcloud(words = wf$word, freq = wf$n, min.freq = 10,
+          max.words=100, random.order=FALSE, rot.per=0.35, 
+          colors=brewer.pal(8, "Dark2"))
+```
+
+```{r bing}
+data$bing_word_counts <- data$wo_profanity %>%
+  inner_join(get_sentiments("bing")) %>%
+  count(word, sentiment, sort = TRUE) %>%
+  ungroup()
+
+
+
+data$bing_word_counts %>%
+  group_by(sentiment) %>%
+  slice_max(n, n = 10) %>% 
+  ungroup() %>%
+  mutate(word = reorder(word, n)) %>%
+  ggplot(aes(n, word, fill = sentiment)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~sentiment, scales = "free_y") +
+  labs(x = "Contribution to sentiment",
+       y = NULL)
+```
+
+
+```{r nrc}
+data$nrc_word_counts <- data$wo_profanity %>%
+  inner_join(get_sentiments("nrc")) %>%
+  count(word, sentiment, sort = TRUE) %>%
+  ungroup()
+
+data$nrc_word_counts %>%
+  group_by(sentiment) %>%
+  slice_max(n, n = 10) %>% 
+  ungroup() %>%
+  mutate(word = reorder(word, n)) %>%
+  ggplot(aes(n, word, fill = sentiment)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~sentiment, scales = "free_y") +
+  labs(x = "Contribution to sentiment",
+       y = NULL)
+```
+
+
+### 2-gram
+```{r 2gram}
+data$bigram <- data$text_tibble %>% 
+                 unnest_tokens(bigram, text, token = "ngrams", n = 2) %>%
+                 # Replace na tokens with blank str
+                 mutate(word = if_else(is.na(bigram), "", bigram))
+```
+
+```{r bigram_clean}
+bigrams_separated <- data$bigram %>%
+  separate(bigram, c("word1", "word2"), sep = " ")
+
+bigrams_filtered <- bigrams_separated %>%
+  filter(!word1 %in% stop_words$word) %>%
+  filter(!word2 %in% stop_words$word) %>%
+  filter(!word1 %in% profane_words) %>%
+  filter(!word2 %in% profane_words)
+
+data$bigrams_separated <- bigrams_filtered
+data$bigrams_filtered <- bigrams_filtered %>%
+                         unite(bigram, word1, word2, sep = " ")
+```
+
+```{r barlpot_bigram}
+bf <- count(data$bigrams_filtered, bigram, sort = TRUE)
+bf10 <- head(bf,10)
+
+ggplot(bf10, aes(x=reorder(bigram, n), y=n, fill = bigram)) +
+  geom_bar(stat='identity', show.legend = FALSE) +
+  coord_flip() +
+  xlab("Bigram")
+```
+
+### 3-gram
+```{r 3gram}
+data$trigram <- data$text_tibble %>% 
+                 unnest_tokens(trigram, text, token = "ngrams", n = 3) %>%
+                 # Replace na tokens with blank str
+                 mutate(word = if_else(is.na(trigram), "", trigram))
+```
+
+```{r trigram_clean}
+trigrams_separated <- data$trigram %>%
+  separate(trigram, c("word1", "word2", "word3"), sep = " ")
+
+trigrams_filtered <- trigrams_separated %>%
+  filter(!word1 %in% stop_words$word) %>%
+  filter(!word2 %in% stop_words$word) %>%
+  filter(!word3 %in% stop_words$word) %>%
+  filter(!word1 %in% profane_words) %>%
+  filter(!word2 %in% profane_words) %>%
+  filter(!word3 %in% profane_words) %>%
+  filter(!is.na(word1)) %>%
+  filter(!is.na(word2)) %>%
+  filter(!is.na(word3))
+
+data$trigrams_separated <- trigrams_filtered
+data$trigrams_filtered <- trigrams_filtered %>%
+                         unite(trigram, word1, word2, word3, sep = " ")
+```
+
+```{r barlpot_trigram}
+tf <- count(data$trigrams_filtered, trigram, sort = TRUE)
+tf10 <- head(tf,10)
+
+ggplot(tf10, aes(x=reorder(trigram, n), y=n, fill = trigram)) +
+  geom_bar(stat='identity', show.legend = FALSE) +
+  coord_flip() +
+  xlab("Trigram")
+```
+
+
+### TODO
+Ir explicando los pasos y describir mis descubrimientos
