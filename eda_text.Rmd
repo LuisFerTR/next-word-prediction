@@ -1,0 +1,817 @@
+---
+title: "Exploratory Data Analysis"
+author: "Luis Talavera"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r libraries, echo=FALSE, message=FALSE}
+library(tidyverse)
+library(tidytext)
+library(sentimentr) 
+library(R.utils)
+library(wordcloud)
+library(RColorBrewer)
+library(hunspell)
+```
+
+## Goal of analysis
+
+The main goal is of this analysis is explore the corpus to identify key aspects of data, how many words each file have, how many lines each file have, how many words represent a certain percentage of the text.
+
+For this analysis, we will explore US blogs, tweets and news, plot words frequency and analyze the most common 2-grams and 3-grams (combinations of 2 or 3 words).
+
+
+## Get data
+
+First we download the data from URL.
+
+```{r get_data, echo=FALSE}
+zip_url <- "https://d396qusza40orc.cloudfront.net/dsscapstone/dataset/Coursera-SwiftKey.zip"
+zip_file <- "Coursera-Swiftkey.zip"
+data_dir <- "./data/final"
+lang_dir <- "/en_US/"
+file_name <- list(blogs = "en_US.blogs.txt",
+                  news = "en_US.news.txt",
+                  twitter = "en_US.twitter.txt")
+file_paths <- lapply(file_name, function(name) { paste0(data_dir,lang_dir, name) })
+
+
+if(!file.exists(paste0("./data/", zip_file))) {
+  download(zip_url)
+}
+
+if(!file.exists(data_dir)) {
+  setwd("./data")
+  unzip(zip_file)
+  setwd("../")
+}
+
+```
+
+Now we will show basic summaries: file lines, words, word frequency
+```{r summary, cache=TRUE}
+file_lines <- sapply(file_name, function(x) {
+  as.numeric(countLines(paste0(data_dir, lang_dir, x)))
+  })
+
+tibble(File = unlist(file_name), Lines = file_lines)
+```
+
+We are going to subset data to continue exploring data.
+```{r subset_data}
+
+sample_text <- function(file_name, output_name) {
+  set.seed(1234)
+  
+  lines <- read_lines(file_name)
+  
+  n_lines <- as.numeric(countLines(file_name))
+  
+  size <- ifelse(n_lines/1000 > 1000, n_lines/1000, 1000)
+  
+  selected_lines <- sample(n_lines, size = size, replace = FALSE)
+  subset_text <- lines[selected_lines]
+  
+  write_lines(subset_text, output_name)
+}
+
+
+sample_name <- lapply(file_name, function(name) { paste0("sample_", name) })
+sample_paths <- lapply(sample_name, function(name) { paste0(data_dir,lang_dir, name) })
+
+# Sample Blogs data
+if(!file.exists(paste0(data_dir,lang_dir,sample_name["blogs"]))) {
+  sample_text(paste0(data_dir,lang_dir,file_name["blogs"]),
+              paste0(data_dir,lang_dir,sample_name["blogs"]))
+}
+
+# Sample News data
+if(!file.exists(paste0(data_dir,lang_dir,sample_name["news"]))) {
+  sample_text(paste0(data_dir,lang_dir,file_name["news"]),
+              paste0(data_dir,lang_dir,sample_name["news"]))
+}
+
+# Sample Twitter data
+if(!file.exists(paste0(data_dir,lang_dir,sample_name["twitter"]))) {
+  sample_text(paste0(data_dir,lang_dir,file_name["twitter"]),
+              paste0(data_dir,lang_dir,sample_name["twitter"]))
+}
+```
+### Blog data
+
+First 10 lines of blog data sample
+
+```{r blog_read}
+blog_lines <- read_lines(sample_paths["blogs"])
+head(blog_lines, 10)
+```
+
+```{r blog_data_structure}
+# Create a list to store all data transformations
+blog_data <- list()
+```
+
+
+To analyze words is necessary to split each line into tokens, this process is called tokenization.
+
+```{r blog_token}
+blog_data$text_tibble <- tibble(line = 1:length(blog_lines), text = blog_lines)
+blog_data$original <- blog_data$text_tibble %>% 
+                 unnest_tokens(token, text, strip_punct = TRUE) %>%
+                 filter(!is.na(token)) %>%
+                 mutate(word = token)
+
+# Remove stopwords
+blog_data$wo_stepwords <- blog_data$original %>%
+                     anti_join(stop_words, by=c("token"="word"))
+```
+
+
+
+```{r blog_profanity_filtering, warning=FALSE}
+# Using sentimentr
+blog_data$sentences <- get_sentences(blog_lines)
+
+profanity_terms <- extract_profanity_terms(blog_data$sentences) # names: neutral, profanity, sentence
+
+profane_words <- unique(unlist(profanity_terms$profanity))
+
+# Filter profanity
+blog_data$wo_profanity <- blog_data$wo_stepwords %>%
+                     filter(!token %in% profane_words)
+```
+
+
+```{r blog_data_cleaning}
+# Remove numbers
+blog_data$wo_numbers <- blog_data$wo_profanity %>% filter(!grepl("^(\\d+(,\\d+)*(.\\d+))|(\\d+)$", word))
+
+# Remove misspelled words
+blog_data$correct_words <- blog_data$wo_numbers %>% filter(hunspell_check(word))
+```
+
+### 1-gram
+```{r blog_word frequency, echo=FALSE}
+wf <- count(blog_data$correct_words, word, sort = TRUE)
+wf10 <- head(wf,15)
+
+ggplot(wf10, aes(x=reorder(word, n), y=n, fill = word)) +
+  geom_bar(stat='identity', show.legend = FALSE) +
+  coord_flip() +
+  xlab("Word")
+```
+
+```{r blog_wordcloud, echo=FALSE}
+set.seed(1234)
+wordcloud(words = wf$word, freq = wf$n, min.freq = 10,
+          max.words=100, random.order=FALSE, rot.per=0.35, 
+          colors=brewer.pal(8, "Dark2"))
+```
+
+```{r blog_bing, echo=FALSE}
+blog_data$bing_word_counts <- blog_data$wo_profanity %>%
+  inner_join(get_sentiments("bing")) %>%
+  count(word, sentiment, sort = TRUE) %>%
+  ungroup()
+
+
+
+blog_data$bing_word_counts %>%
+  group_by(sentiment) %>%
+  slice_max(n, n = 10) %>% 
+  ungroup() %>%
+  mutate(word = reorder(word, n)) %>%
+  ggplot(aes(n, word, fill = sentiment)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~sentiment, scales = "free_y") +
+  labs(x = "Contribution to sentiment",
+       y = NULL)
+```
+
+
+```{r blog_nrc, echo=FALSE}
+blog_data$nrc_word_counts <- blog_data$wo_profanity %>%
+  inner_join(get_sentiments("nrc")) %>%
+  count(word, sentiment, sort = TRUE) %>%
+  ungroup()
+
+blog_data$nrc_word_counts %>%
+  group_by(sentiment) %>%
+  slice_max(n, n = 10) %>% 
+  ungroup() %>%
+  mutate(word = reorder(word, n)) %>%
+  ggplot(aes(n, word, fill = sentiment)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~sentiment, scales = "free_y") +
+  labs(x = "Contribution to sentiment",
+       y = NULL)
+```
+
+
+### 2-gram
+```{r blog_2gram}
+blog_data$bigram <- blog_data$text_tibble %>% 
+                 unnest_tokens(bigram, text, token = "ngrams", n = 2) %>%
+                 filter(!is.na(bigram))
+```
+
+2-grams with stop words.
+
+```{r blog_bigram_clean}
+bigrams_separated <- blog_data$bigram %>%
+  separate(bigram, c("word1", "word2"), sep = " ")
+
+bigrams_filtered <- bigrams_separated %>%
+  filter(!word1 %in% profane_words) %>%
+  filter(!word2 %in% profane_words) %>%
+  filter(!is.na(word1)) %>%
+  filter(!is.na(word2)) %>%
+  filter(!grepl("^(\\d+(,\\d+)*(.\\d+))|(\\d+)$", word1)) %>%
+  filter(!grepl("^(\\d+(,\\d+)*(.\\d+))|(\\d+)$", word2)) %>%
+  filter(hunspell_check(word1)) %>%
+  filter(hunspell_check(word2))
+
+blog_data$bigrams_separated <- bigrams_filtered
+blog_data$bigrams_filtered <- bigrams_filtered %>%
+                         unite(bigram, word1, word2, sep = " ")
+```
+
+```{r blog_barlpot_bigram, echo=FALSE}
+bf <- count(blog_data$bigrams_filtered, bigram, sort = TRUE)
+bf10 <- head(bf,20)
+
+ggplot(bf10, aes(x=reorder(bigram, n), y=n, fill = bigram)) +
+  geom_bar(stat='identity', show.legend = FALSE) +
+  coord_flip() +
+  xlab("Bigram")
+```
+
+2-grams without stop words.
+
+```{r blog_bigram_clean_stopwords}
+blog_data$bigrams_wo_stepwords <- blog_data$bigrams_separated %>%
+  filter(!word1 %in% stop_words$word) %>%
+  filter(!word2 %in% stop_words$word) %>%
+  unite(bigram, word1, word2, sep = " ")
+```
+
+```{r blog_barlpot_bigram_stopwords, echo=FALSE}
+bf <- count(blog_data$bigrams_wo_stepwords, bigram, sort = TRUE)
+bf10 <- head(bf,20)
+
+ggplot(bf10, aes(x=reorder(bigram, n), y=n, fill = bigram)) +
+  geom_bar(stat='identity', show.legend = FALSE) +
+  coord_flip() +
+  xlab("Bigram")
+```
+
+### 3-gram
+
+3-gram with stop words
+
+```{r blog_3gram}
+blog_data$trigram <- blog_data$text_tibble %>% 
+                 unnest_tokens(trigram, text, token = "ngrams", n = 3) %>%
+                 filter(!is.na(trigram))
+```
+
+```{r blog_trigram_clean}
+trigrams_separated <- blog_data$trigram %>%
+  separate(trigram, c("word1", "word2", "word3"), sep = " ")
+
+trigrams_filtered <- trigrams_separated %>%
+  filter(!word1 %in% profane_words) %>%
+  filter(!word2 %in% profane_words) %>%
+  filter(!word3 %in% profane_words) %>%
+  filter(!is.na(word1)) %>%
+  filter(!is.na(word2)) %>%
+  filter(!is.na(word3)) %>%
+  filter(!grepl("^(\\d+(,\\d+)*(.\\d+))|(\\d+)$", word1)) %>%
+  filter(!grepl("^(\\d+(,\\d+)*(.\\d+))|(\\d+)$", word2)) %>%
+  filter(!grepl("^(\\d+(,\\d+)*(.\\d+))|(\\d+)$", word3)) %>%
+  filter(hunspell_check(word1)) %>%
+  filter(hunspell_check(word2)) %>%
+  filter(hunspell_check(word3))
+
+blog_data$trigrams_separated <- trigrams_filtered
+blog_data$trigrams_filtered <- trigrams_filtered %>%
+                         unite(trigram, word1, word2, word3, sep = " ")
+```
+
+```{r blog_barlpot_trigram, echo=FALSE}
+tf <- count(blog_data$trigrams_filtered, trigram, sort = TRUE)
+tf10 <- head(tf,20)
+
+ggplot(tf10, aes(x=reorder(trigram, n), y=n, fill = trigram)) +
+  geom_bar(stat='identity', show.legend = FALSE) +
+  coord_flip() +
+  xlab("Trigram")
+```
+
+3-gram without stop words
+
+```{r blog_trigram_clean_stopwords}
+blog_data$trigrams_wo_stopwords <- blog_data$trigrams_separated %>%
+  filter(!word1 %in% stop_words$word) %>%
+  filter(!word2 %in% stop_words$word) %>%
+  filter(!word3 %in% stop_words$word) %>%
+  unite(trigram, word1, word2, word3, sep = " ")
+```
+
+```{r blog_barlpot_trigram_stopwords, echo=FALSE}
+tf <- count(blog_data$trigrams_wo_stopwords, trigram, sort = TRUE)
+tf10 <- head(tf,20)
+
+ggplot(tf10, aes(x=reorder(trigram, n), y=n, fill = trigram)) +
+  geom_bar(stat='identity', show.legend = FALSE) +
+  coord_flip() +
+  xlab("Trigram")
+```
+
+### News data
+
+First 10 lines of news data sample
+
+```{r news_read}
+news_lines <- read_lines(sample_paths["news"])
+head(news_lines, 10)
+```
+
+```{r news_data_structure}
+# Create a list to store all data transformations
+news_data <- list()
+```
+
+
+Tokenize news data to later perform a word analysis.
+
+```{r news_token}
+news_data$text_tibble <- tibble(line = 1:length(news_lines), text = news_lines)
+news_data$original <- news_data$text_tibble %>% 
+                 unnest_tokens(token, text, strip_punct = TRUE) %>%
+                 filter(!is.na(token)) %>%
+                 mutate(word = token)
+
+# Remove stopwords
+news_data$wo_stepwords <- news_data$original %>%
+                     anti_join(stop_words, by=c("token"="word"))
+```
+
+
+
+```{r news_profanity_filtering, warning=FALSE}
+# Using sentimentr
+news_data$sentences <- get_sentences(news_lines)
+
+profanity_terms <- extract_profanity_terms(news_data$sentences) # names: neutral, profanity, sentence
+
+profane_words <- unique(unlist(profanity_terms$profanity))
+
+# Filter profanity
+news_data$wo_profanity <- news_data$wo_stepwords %>%
+                     filter(!token %in% profane_words)
+```
+
+
+```{r news_data_cleaning}
+# Remove numbers
+news_data$wo_numbers <- news_data$wo_profanity %>% filter(!grepl("^(\\d+(,\\d+)*(.\\d+))|(\\d+)$", word))
+
+# Remove misspelled words
+news_data$correct_words <- news_data$wo_numbers %>% filter(hunspell_check(word))
+```
+
+### 1-gram
+```{r news_word frequency, echo=FALSE}
+wf <- count(news_data$correct_words, word, sort = TRUE)
+wf10 <- head(wf,15)
+
+ggplot(wf10, aes(x=reorder(word, n), y=n, fill = word)) +
+  geom_bar(stat='identity', show.legend = FALSE) +
+  coord_flip() +
+  xlab("Word")
+```
+
+```{r news_wordcloud, echo=FALSE, warning=FALSE}
+set.seed(1234)
+wordcloud(words = wf$word, freq = wf$n, min.freq = 10,
+          max.words=100, random.order=FALSE, rot.per=0.35, 
+          colors=brewer.pal(8, "Dark2"))
+```
+
+```{r news_bing, echo=FALSE}
+news_data$bing_word_counts <- news_data$wo_profanity %>%
+  inner_join(get_sentiments("bing")) %>%
+  count(word, sentiment, sort = TRUE) %>%
+  ungroup()
+
+
+
+news_data$bing_word_counts %>%
+  group_by(sentiment) %>%
+  slice_max(n, n = 10) %>% 
+  ungroup() %>%
+  mutate(word = reorder(word, n)) %>%
+  ggplot(aes(n, word, fill = sentiment)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~sentiment, scales = "free_y") +
+  labs(x = "Contribution to sentiment",
+       y = NULL)
+```
+
+
+```{r news_nrc, echo=FALSE}
+news_data$nrc_word_counts <- news_data$wo_profanity %>%
+  inner_join(get_sentiments("nrc")) %>%
+  count(word, sentiment, sort = TRUE) %>%
+  ungroup()
+
+news_data$nrc_word_counts %>%
+  group_by(sentiment) %>%
+  slice_max(n, n = 10) %>% 
+  ungroup() %>%
+  mutate(word = reorder(word, n)) %>%
+  ggplot(aes(n, word, fill = sentiment)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~sentiment, scales = "free_y") +
+  labs(x = "Contribution to sentiment",
+       y = NULL)
+```
+
+
+### 2-gram
+```{r news_2gram}
+news_data$bigram <- news_data$text_tibble %>% 
+                 unnest_tokens(bigram, text, token = "ngrams", n = 2) %>%
+                 filter(!is.na(bigram))
+```
+
+2-grams with stop words.
+
+```{r news_bigram_clean}
+bigrams_separated <- news_data$bigram %>%
+  separate(bigram, c("word1", "word2"), sep = " ")
+
+bigrams_filtered <- bigrams_separated %>%
+  filter(!word1 %in% profane_words) %>%
+  filter(!word2 %in% profane_words) %>%
+  filter(!is.na(word1)) %>%
+  filter(!is.na(word2)) %>%
+  filter(!grepl("^(\\d+(,\\d+)*(.\\d+))|(\\d+)$", word1)) %>%
+  filter(!grepl("^(\\d+(,\\d+)*(.\\d+))|(\\d+)$", word2)) %>%
+  filter(hunspell_check(word1)) %>%
+  filter(hunspell_check(word2))
+
+news_data$bigrams_separated <- bigrams_filtered
+news_data$bigrams_filtered <- bigrams_filtered %>%
+                         unite(bigram, word1, word2, sep = " ")
+```
+
+```{r news_barlpot_bigram, echo=FALSE}
+bf <- count(news_data$bigrams_filtered, bigram, sort = TRUE)
+bf10 <- head(bf,20)
+
+ggplot(bf10, aes(x=reorder(bigram, n), y=n, fill = bigram)) +
+  geom_bar(stat='identity', show.legend = FALSE) +
+  coord_flip() +
+  xlab("Bigram")
+```
+
+2-grams without stop words.
+
+```{r news_bigram_clean_stopwords}
+news_data$bigrams_wo_stepwords <- news_data$bigrams_separated %>%
+  filter(!word1 %in% stop_words$word) %>%
+  filter(!word2 %in% stop_words$word) %>%
+  unite(bigram, word1, word2, sep = " ")
+```
+
+```{r news_barlpot_bigram_stopwords, echo=FALSE}
+bf <- count(news_data$bigrams_wo_stepwords, bigram, sort = TRUE)
+bf10 <- head(bf,20)
+
+ggplot(bf10, aes(x=reorder(bigram, n), y=n, fill = bigram)) +
+  geom_bar(stat='identity', show.legend = FALSE) +
+  coord_flip() +
+  xlab("Bigram")
+```
+
+### 3-gram
+
+3-gram with stop words
+
+```{r news_3gram}
+news_data$trigram <- news_data$text_tibble %>% 
+                 unnest_tokens(trigram, text, token = "ngrams", n = 3) %>%
+                 filter(!is.na(trigram))
+```
+
+```{r news_trigram_clean}
+trigrams_separated <- news_data$trigram %>%
+  separate(trigram, c("word1", "word2", "word3"), sep = " ")
+
+trigrams_filtered <- trigrams_separated %>%
+  filter(!word1 %in% profane_words) %>%
+  filter(!word2 %in% profane_words) %>%
+  filter(!word3 %in% profane_words) %>%
+  filter(!is.na(word1)) %>%
+  filter(!is.na(word2)) %>%
+  filter(!is.na(word3)) %>%
+  filter(!grepl("^(\\d+(,\\d+)*(.\\d+))|(\\d+)$", word1)) %>%
+  filter(!grepl("^(\\d+(,\\d+)*(.\\d+))|(\\d+)$", word2)) %>%
+  filter(!grepl("^(\\d+(,\\d+)*(.\\d+))|(\\d+)$", word3)) %>%
+  filter(hunspell_check(word1)) %>%
+  filter(hunspell_check(word2)) %>%
+  filter(hunspell_check(word3))
+
+news_data$trigrams_separated <- trigrams_filtered
+news_data$trigrams_filtered <- trigrams_filtered %>%
+                         unite(trigram, word1, word2, word3, sep = " ")
+```
+
+```{r news_barlpot_trigram, echo=FALSE}
+tf <- count(news_data$trigrams_filtered, trigram, sort = TRUE)
+tf10 <- head(tf,20)
+
+ggplot(tf10, aes(x=reorder(trigram, n), y=n, fill = trigram)) +
+  geom_bar(stat='identity', show.legend = FALSE) +
+  coord_flip() +
+  xlab("Trigram")
+```
+
+3-gram without stop words
+
+```{r news_trigram_clean_stopwords}
+news_data$trigrams_wo_stopwords <- news_data$trigrams_separated %>%
+  filter(!word1 %in% stop_words$word) %>%
+  filter(!word2 %in% stop_words$word) %>%
+  filter(!word3 %in% stop_words$word) %>%
+  unite(trigram, word1, word2, word3, sep = " ")
+```
+
+```{r news_barlpot_trigram_stopwords, echo=FALSE}
+tf <- count(news_data$trigrams_wo_stopwords, trigram, sort = TRUE)
+tf10 <- head(tf,20)
+
+ggplot(tf10, aes(x=reorder(trigram, n), y=n, fill = trigram)) +
+  geom_bar(stat='identity', show.legend = FALSE) +
+  coord_flip() +
+  xlab("Trigram")
+```
+
+
+### Twitter data
+
+First 10 lines of twitter data sample
+
+```{r twitter_read}
+twitter_lines <- read_lines(sample_paths["twitter"])
+head(twitter_lines, 10)
+```
+
+```{r twitter_data_structure}
+# Create a list to store all data transformations
+twitter_data <- list()
+```
+
+
+Tokenize twitter data to later perform a word analysis.
+
+```{r twitter_token}
+twitter_data$text_tibble <- tibble(line = 1:length(twitter_lines), text = twitter_lines)
+twitter_data$original <- twitter_data$text_tibble %>% 
+                 unnest_tokens(token, text, strip_punct = TRUE) %>%
+                 filter(!is.na(token)) %>%
+                 mutate(word = token)
+
+# Remove stopwords
+twitter_data$wo_stepwords <- twitter_data$original %>%
+                     anti_join(stop_words, by=c("token"="word"))
+```
+
+
+
+```{r twitter_profanity_filtering, warning=FALSE}
+# Using sentimentr
+twitter_data$sentences <- get_sentences(twitter_lines)
+
+profanity_terms <- extract_profanity_terms(twitter_data$sentences) # names: neutral, profanity, sentence
+
+profane_words <- unique(unlist(profanity_terms$profanity))
+
+# Filter profanity
+twitter_data$wo_profanity <- twitter_data$wo_stepwords %>%
+                     filter(!token %in% profane_words)
+```
+
+
+```{r twitter_data_cleaning}
+# Remove numbers
+twitter_data$wo_numbers <- twitter_data$wo_profanity %>% filter(!grepl("^(\\d+(,\\d+)*(.\\d+))|(\\d+)$", word))
+
+# Remove misspelled words
+twitter_data$correct_words <- twitter_data$wo_numbers %>% filter(hunspell_check(word))
+```
+
+### 1-gram
+```{r twitter_word frequency, echo=FALSE}
+wf <- count(twitter_data$correct_words, word, sort = TRUE)
+wf10 <- head(wf,15)
+
+ggplot(wf10, aes(x=reorder(word, n), y=n, fill = word)) +
+  geom_bar(stat='identity', show.legend = FALSE) +
+  coord_flip() +
+  xlab("Word")
+```
+
+```{r twitter_wordcloud, echo=FALSE, warning=FALSE}
+set.seed(1234)
+wordcloud(words = wf$word, freq = wf$n, min.freq = 10,
+          max.words=100, random.order=FALSE, rot.per=0.35, 
+          colors=brewer.pal(8, "Dark2"))
+```
+
+```{r twitter_bing, echo=FALSE}
+twitter_data$bing_word_counts <- twitter_data$wo_profanity %>%
+  inner_join(get_sentiments("bing")) %>%
+  count(word, sentiment, sort = TRUE) %>%
+  ungroup()
+
+
+
+twitter_data$bing_word_counts %>%
+  group_by(sentiment) %>%
+  slice_max(n, n = 10) %>% 
+  ungroup() %>%
+  mutate(word = reorder(word, n)) %>%
+  ggplot(aes(n, word, fill = sentiment)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~sentiment, scales = "free_y") +
+  labs(x = "Contribution to sentiment",
+       y = NULL)
+```
+
+
+```{r twitter_nrc, echo=FALSE}
+twitter_data$nrc_word_counts <- twitter_data$wo_profanity %>%
+  inner_join(get_sentiments("nrc")) %>%
+  count(word, sentiment, sort = TRUE) %>%
+  ungroup()
+
+twitter_data$nrc_word_counts %>%
+  group_by(sentiment) %>%
+  slice_max(n, n = 10) %>% 
+  ungroup() %>%
+  mutate(word = reorder(word, n)) %>%
+  ggplot(aes(n, word, fill = sentiment)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~sentiment, scales = "free_y") +
+  labs(x = "Contribution to sentiment",
+       y = NULL)
+```
+
+
+### 2-gram
+```{r twitter_2gram}
+twitter_data$bigram <- twitter_data$text_tibble %>% 
+                 unnest_tokens(bigram, text, token = "ngrams", n = 2) %>%
+                 filter(!is.na(bigram))
+```
+
+2-grams with stop words.
+
+```{r twitter_bigram_clean}
+bigrams_separated <- twitter_data$bigram %>%
+  separate(bigram, c("word1", "word2"), sep = " ")
+
+bigrams_filtered <- bigrams_separated %>%
+  filter(!word1 %in% profane_words) %>%
+  filter(!word2 %in% profane_words) %>%
+  filter(!is.na(word1)) %>%
+  filter(!is.na(word2)) %>%
+  filter(!grepl("^(\\d+(,\\d+)*(.\\d+))|(\\d+)$", word1)) %>%
+  filter(!grepl("^(\\d+(,\\d+)*(.\\d+))|(\\d+)$", word2)) %>%
+  filter(hunspell_check(word1)) %>%
+  filter(hunspell_check(word2))
+
+twitter_data$bigrams_separated <- bigrams_filtered
+twitter_data$bigrams_filtered <- bigrams_filtered %>%
+                         unite(bigram, word1, word2, sep = " ")
+```
+
+```{r twitter_barlpot_bigram, echo=FALSE}
+bf <- count(twitter_data$bigrams_filtered, bigram, sort = TRUE)
+bf10 <- head(bf,20)
+
+ggplot(bf10, aes(x=reorder(bigram, n), y=n, fill = bigram)) +
+  geom_bar(stat='identity', show.legend = FALSE) +
+  coord_flip() +
+  xlab("Bigram")
+```
+
+2-grams without stop words.
+
+```{r twitter_bigram_clean_stopwords}
+twitter_data$bigrams_wo_stepwords <- twitter_data$bigrams_separated %>%
+  filter(!word1 %in% stop_words$word) %>%
+  filter(!word2 %in% stop_words$word) %>%
+  unite(bigram, word1, word2, sep = " ")
+```
+
+```{r twitter_barlpot_bigram_stopwords, echo=FALSE}
+bf <- count(twitter_data$bigrams_wo_stepwords, bigram, sort = TRUE)
+bf10 <- head(bf,20)
+
+ggplot(bf10, aes(x=reorder(bigram, n), y=n, fill = bigram)) +
+  geom_bar(stat='identity', show.legend = FALSE) +
+  coord_flip() +
+  xlab("Bigram")
+```
+
+### 3-gram
+
+3-gram with stop words
+
+```{r twitter_3gram}
+twitter_data$trigram <- twitter_data$text_tibble %>% 
+                 unnest_tokens(trigram, text, token = "ngrams", n = 3) %>%
+                 filter(!is.na(trigram))
+```
+
+```{r twitter_trigram_clean}
+trigrams_separated <- twitter_data$trigram %>%
+  separate(trigram, c("word1", "word2", "word3"), sep = " ")
+
+trigrams_filtered <- trigrams_separated %>%
+  filter(!word1 %in% profane_words) %>%
+  filter(!word2 %in% profane_words) %>%
+  filter(!word3 %in% profane_words) %>%
+  filter(!is.na(word1)) %>%
+  filter(!is.na(word2)) %>%
+  filter(!is.na(word3)) %>%
+  filter(!grepl("^(\\d+(,\\d+)*(.\\d+))|(\\d+)$", word1)) %>%
+  filter(!grepl("^(\\d+(,\\d+)*(.\\d+))|(\\d+)$", word2)) %>%
+  filter(!grepl("^(\\d+(,\\d+)*(.\\d+))|(\\d+)$", word3)) %>%
+  filter(hunspell_check(word1)) %>%
+  filter(hunspell_check(word2)) %>%
+  filter(hunspell_check(word3))
+
+twitter_data$trigrams_separated <- trigrams_filtered
+twitter_data$trigrams_filtered <- trigrams_filtered %>%
+                         unite(trigram, word1, word2, word3, sep = " ")
+```
+
+```{r twitter_barlpot_trigram, echo=FALSE}
+tf <- count(twitter_data$trigrams_filtered, trigram, sort = TRUE)
+tf10 <- head(tf,20)
+
+ggplot(tf10, aes(x=reorder(trigram, n), y=n, fill = trigram)) +
+  geom_bar(stat='identity', show.legend = FALSE) +
+  coord_flip() +
+  xlab("Trigram")
+```
+
+3-gram without stop words
+
+```{r twitter_trigram_clean_stopwords}
+twitter_data$trigrams_wo_stopwords <- twitter_data$trigrams_separated %>%
+  filter(!word1 %in% stop_words$word) %>%
+  filter(!word2 %in% stop_words$word) %>%
+  filter(!word3 %in% stop_words$word) %>%
+  unite(trigram, word1, word2, word3, sep = " ")
+```
+
+```{r twitter_barlpot_trigram_stopwords, echo=FALSE}
+tf <- count(twitter_data$trigrams_wo_stopwords, trigram, sort = TRUE)
+tf10 <- head(tf,20)
+
+ggplot(tf10, aes(x=reorder(trigram, n), y=n, fill = trigram)) +
+  geom_bar(stat='identity', show.legend = FALSE) +
+  coord_flip() +
+  xlab("Trigram")
+```
+
+
+==================================================================================
+## Questions to consider
+
+Some words are more frequent than others - what are the distributions of word frequencies? 
+
+What are the frequencies of 2-grams and 3-grams in the dataset? 
+
+How many unique words do you need in a frequency sorted dictionary to cover 50% of all word instances in the language? 90%? 
+
+How do you evaluate how many of the words come from foreign languages? 
+
+Can you think of a way to increase the coverage -- identifying words that may not be in the corpora or using a smaller number of words in the dictionary to cover the same number of phrases?
+
+
+
+==========================================================
+TODO: 
+Contar palabras y palabras únicas de las muestras

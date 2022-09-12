@@ -16,6 +16,7 @@ library(sentimentr)
 library(R.utils)
 library(wordcloud)
 library(RColorBrewer)
+library(hunspell)
 ```
 
 
@@ -73,21 +74,16 @@ if(!file.exists(data_dir)) {
 sample_text <- function(file_name, output_name) {
   set.seed(1234)
   
-  lines <- scan(file_name, character(0), sep = "\n") # separate each line
+  lines <- read_lines(file_name)
+  
   n_lines <- as.numeric(countLines(file_name))
   
-  conn <- file(file_name, "r") 
-  lines <- readLines(conn, (n_lines/1000), encoding="UTF-8")
+  size <- ifelse(n_lines/1000 > 1000, n_lines/1000, 1000)
   
-  # Fix wrong file encoding
-  fixed <- iconv(lines, from = "UTF-8", to = "Windows-1252")
-  Encoding(fixed) <- "UTF-8"
+  selected_lines <- sample(n_lines, size = size, replace = FALSE)
+  subset_text <- lines[selected_lines]
   
-  selected_lines <- rbinom(1000, n_lines, 0.5)
-  subset_text <- fixed[selected_lines]
-  
-  writeLines(lines, con=output_name, "\n")
-  close(conn)
+  write_lines(subset_text, output_name)
 }
 
 if(!file.exists(paste0(data_dir, "/en_US/en_US_sample.twitter.txt"))) {
@@ -106,14 +102,16 @@ data <- list()
 
 ```{r tokenize_clean_data}
 conn <- file(paste0(data_dir, "/en_US/en_US_sample.twitter.txt"), "r") 
-lines <- readLines(conn,encoding="latin1")
+lines <- readLines(conn,encoding="UTF-8")
+fixed <- iconv(lines, from = "UTF-8", to = "Windows-1252")
+Encoding(fixed) <- "UTF-8"
 close(conn)
 
 data$text_tibble <- tibble(line = 1:length(lines), text = lines)
 data$original <- data$text_tibble %>% 
-                 unnest_tokens(token, text) %>%
-                 # Replace na tokens with blank str
-                 mutate(word = if_else(is.na(token), "", token))
+                 unnest_tokens(token, text, strip_punct = TRUE) %>%
+                 filter(!is.na(token)) %>%
+                 mutate(word = token)
 
 # Remove stopwords
 data$wo_stepwords <- data$original %>%
@@ -124,20 +122,31 @@ data$wo_stepwords <- data$original %>%
 # Using sentimentr
 data$sentences <- get_sentences(lines)
 
-profanity_terms <- extract_profanity_terms(data$sentences) # names: neutal, profanity, sentence
+profanity_terms <- extract_profanity_terms(data$sentences) # names: neutral, profanity, sentence
 
 profane_words <- unique(unlist(profanity_terms$profanity))
 
 # Filter profanity
 data$wo_profanity <- data$wo_stepwords %>%
-                     filter(!word %in% profane_words)
+                     filter(!token %in% profane_words)
 ```
 
-## Exploratory Analysis
+
+```{r data_cleaning}
+# Remove numbers
+data$wo_numbers <- data$wo_profanity %>% filter(!grepl("^(\\d+(,\\d+)*(.\\d+))|(\\d+)$", word))
+
+# Remove misspelled words
+data$correct_words <- data$wo_numbers %>% filter(hunspell_check(word))
+```
+
+
+
+## Task 2: Exploratory Analysis
 ### 1-gram
 ```{r word frequency}
-wf <- count(data$wo_profanity, word, sort = TRUE)
-wf10 <- head(wf,10)
+wf <- count(data$correct_words, word, sort = TRUE)
+wf10 <- head(wf,15)
 
 ggplot(wf10, aes(x=reorder(word, n), y=n, fill = word)) +
   geom_bar(stat='identity', show.legend = FALSE) +
@@ -197,7 +206,8 @@ data$nrc_word_counts %>%
 data$bigram <- data$text_tibble %>% 
                  unnest_tokens(bigram, text, token = "ngrams", n = 2) %>%
                  # Replace na tokens with blank str
-                 mutate(word = if_else(is.na(bigram), "", bigram))
+                 # mutate(word = if_else(is.na(bigram), "", bigram))
+                 filter(!is.na(bigram))
 ```
 
 ```{r bigram_clean}
@@ -205,10 +215,16 @@ bigrams_separated <- data$bigram %>%
   separate(bigram, c("word1", "word2"), sep = " ")
 
 bigrams_filtered <- bigrams_separated %>%
-  filter(!word1 %in% stop_words$word) %>%
-  filter(!word2 %in% stop_words$word) %>%
+  #filter(!word1 %in% stop_words$word) %>%
+  #filter(!word2 %in% stop_words$word) %>%
   filter(!word1 %in% profane_words) %>%
-  filter(!word2 %in% profane_words)
+  filter(!word2 %in% profane_words) %>%
+  filter(!is.na(word1)) %>%
+  filter(!is.na(word2)) %>%
+  filter(!grepl("^(\\d+(,\\d+)*(.\\d+))|(\\d+)$", word1)) %>%
+  filter(!grepl("^(\\d+(,\\d+)*(.\\d+))|(\\d+)$", word2)) %>%
+  filter(hunspell_check(word1)) %>%
+  filter(hunspell_check(word2))
 
 data$bigrams_separated <- bigrams_filtered
 data$bigrams_filtered <- bigrams_filtered %>%
@@ -217,7 +233,7 @@ data$bigrams_filtered <- bigrams_filtered %>%
 
 ```{r barlpot_bigram}
 bf <- count(data$bigrams_filtered, bigram, sort = TRUE)
-bf10 <- head(bf,10)
+bf10 <- head(bf,20)
 
 ggplot(bf10, aes(x=reorder(bigram, n), y=n, fill = bigram)) +
   geom_bar(stat='identity', show.legend = FALSE) +
@@ -238,15 +254,21 @@ trigrams_separated <- data$trigram %>%
   separate(trigram, c("word1", "word2", "word3"), sep = " ")
 
 trigrams_filtered <- trigrams_separated %>%
-  filter(!word1 %in% stop_words$word) %>%
-  filter(!word2 %in% stop_words$word) %>%
-  filter(!word3 %in% stop_words$word) %>%
+  #(!word1 %in% stop_words$word) %>%
+  #filter(!word2 %in% stop_words$word) %>%
+  #filter(!word3 %in% stop_words$word) %>%
   filter(!word1 %in% profane_words) %>%
   filter(!word2 %in% profane_words) %>%
   filter(!word3 %in% profane_words) %>%
   filter(!is.na(word1)) %>%
   filter(!is.na(word2)) %>%
-  filter(!is.na(word3))
+  filter(!is.na(word3)) %>%
+  filter(!grepl("^(\\d+(,\\d+)*(.\\d+))|(\\d+)$", word1)) %>%
+  filter(!grepl("^(\\d+(,\\d+)*(.\\d+))|(\\d+)$", word2)) %>%
+  filter(!grepl("^(\\d+(,\\d+)*(.\\d+))|(\\d+)$", word3)) %>%
+  filter(hunspell_check(word1)) %>%
+  filter(hunspell_check(word2)) %>%
+  filter(hunspell_check(word3))
 
 data$trigrams_separated <- trigrams_filtered
 data$trigrams_filtered <- trigrams_filtered %>%
@@ -255,7 +277,7 @@ data$trigrams_filtered <- trigrams_filtered %>%
 
 ```{r barlpot_trigram}
 tf <- count(data$trigrams_filtered, trigram, sort = TRUE)
-tf10 <- head(tf,10)
+tf10 <- head(tf,20)
 
 ggplot(tf10, aes(x=reorder(trigram, n), y=n, fill = trigram)) +
   geom_bar(stat='identity', show.legend = FALSE) +
@@ -264,5 +286,4 @@ ggplot(tf10, aes(x=reorder(trigram, n), y=n, fill = trigram)) +
 ```
 
 
-### TODO
-Ir explicando los pasos y describir mis descubrimientos
+
