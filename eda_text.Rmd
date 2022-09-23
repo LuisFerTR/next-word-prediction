@@ -26,7 +26,7 @@ The main goal is of this analysis is explore the corpus to identify key aspects 
 For this analysis, we will explore US blogs, tweets and news, plot words frequency and analyze the most common 2-grams and 3-grams (combinations of 2 or 3 words).
 
 
-## Get data
+## Data Loading
 
 First we download the data from URL.
 
@@ -54,7 +54,7 @@ if(!file.exists(data_dir)) {
 ```
 
 Now we will show basic summaries: file lines, words, word frequency
-```{r summary, cache=TRUE}
+```{r summary}
 file_lines <- sapply(file_name, function(x) {
   as.numeric(countLines(paste0(data_dir, lang_dir, x)))
   })
@@ -157,8 +157,8 @@ blog_data$correct_words <- blog_data$wo_numbers %>% filter(hunspell_check(word))
 
 ### 1-gram
 ```{r blog_word frequency, echo=FALSE}
-wf <- count(blog_data$correct_words, word, sort = TRUE)
-wf10 <- head(wf,15)
+blog_data$wf <- count(blog_data$correct_words, word, sort = TRUE)
+wf10 <- head(blog_data$wf,15)
 
 ggplot(wf10, aes(x=reorder(word, n), y=n, fill = word)) +
   geom_bar(stat='identity', show.legend = FALSE) +
@@ -168,7 +168,7 @@ ggplot(wf10, aes(x=reorder(word, n), y=n, fill = word)) +
 
 ```{r blog_wordcloud, echo=FALSE}
 set.seed(1234)
-wordcloud(words = wf$word, freq = wf$n, min.freq = 10,
+wordcloud(words = blog_data$wf$word, freq = blog_data$wf$n, min.freq = 10,
           max.words=100, random.order=FALSE, rot.per=0.35, 
           colors=brewer.pal(8, "Dark2"))
 ```
@@ -388,8 +388,8 @@ news_data$correct_words <- news_data$wo_numbers %>% filter(hunspell_check(word))
 
 ### 1-gram
 ```{r news_word frequency, echo=FALSE}
-wf <- count(news_data$correct_words, word, sort = TRUE)
-wf10 <- head(wf,15)
+news_data$wf <- count(news_data$correct_words, word, sort = TRUE)
+wf10 <- head(news_data$wf,15)
 
 ggplot(wf10, aes(x=reorder(word, n), y=n, fill = word)) +
   geom_bar(stat='identity', show.legend = FALSE) +
@@ -399,7 +399,7 @@ ggplot(wf10, aes(x=reorder(word, n), y=n, fill = word)) +
 
 ```{r news_wordcloud, echo=FALSE, warning=FALSE}
 set.seed(1234)
-wordcloud(words = wf$word, freq = wf$n, min.freq = 10,
+wordcloud(words = news_data$wf$word, freq = news_data$wf$n, min.freq = 10,
           max.words=100, random.order=FALSE, rot.per=0.35, 
           colors=brewer.pal(8, "Dark2"))
 ```
@@ -620,8 +620,8 @@ twitter_data$correct_words <- twitter_data$wo_numbers %>% filter(hunspell_check(
 
 ### 1-gram
 ```{r twitter_word frequency, echo=FALSE}
-wf <- count(twitter_data$correct_words, word, sort = TRUE)
-wf10 <- head(wf,15)
+twitter_data$wf <- count(twitter_data$correct_words, word, sort = TRUE)
+wf10 <- head(twitter_data$wf,15)
 
 ggplot(wf10, aes(x=reorder(word, n), y=n, fill = word)) +
   geom_bar(stat='identity', show.legend = FALSE) +
@@ -631,7 +631,7 @@ ggplot(wf10, aes(x=reorder(word, n), y=n, fill = word)) +
 
 ```{r twitter_wordcloud, echo=FALSE, warning=FALSE}
 set.seed(1234)
-wordcloud(words = wf$word, freq = wf$n, min.freq = 10,
+wordcloud(words = twitter_data$wf$word, freq = twitter_data$wf$n, min.freq = 10,
           max.words=100, random.order=FALSE, rot.per=0.35, 
           colors=brewer.pal(8, "Dark2"))
 ```
@@ -797,21 +797,50 @@ ggplot(tf10, aes(x=reorder(trigram, n), y=n, fill = trigram)) +
 ```
 
 
-==================================================================================
+## Sample summaries
+
+```{r word_instances}
+lines <- sapply(sample_paths, function(name) as.numeric(countLines(name)))
+words <- c(length(blog_data$correct_words$word), 
+           length(news_data$correct_words$word),
+           length(twitter_data$correct_words$word))
+unique_words <- c(length(unique(blog_data$correct_words$word)), 
+                  length(unique(news_data$correct_words$word)),
+                  length(unique(twitter_data$correct_words$word)))
+word_instances <- tibble(File = unlist(sample_name),
+                       Lines = lines,
+                       Words = words,
+                       Unique_words = unique_words)
+
+word_instances
+```
+
 ## Questions to consider
 
-Some words are more frequent than others - what are the distributions of word frequencies? 
+#### How many unique words do you need in a frequency sorted dictionary to cover 50% of all word instances in the language? 90%? 
 
-What are the frequencies of 2-grams and 3-grams in the dataset? 
+#### Coverage values for en_US.blogs.txt:
 
-How many unique words do you need in a frequency sorted dictionary to cover 50% of all word instances in the language? 90%? 
+84 unique words (0.43%) to cover 50% all word instances in the document.
 
-How do you evaluate how many of the words come from foreign languages? 
+3847 unique words (19.8%) to cover 90% all word instances in the document.
 
-Can you think of a way to increase the coverage -- identifying words that may not be in the corpora or using a smaller number of words in the dictionary to cover the same number of phrases?
+#### Coverage values for en_US.news.txt:
 
+129 unique words (0.67%) to cover 50% all word instances in the document.
 
+4399 unique words (22.87%) to cover 90% all word instances in the document.
 
-==========================================================
-TODO: 
-Contar palabras y palabras únicas de las muestras
+#### Coverage values for en_US.twitter.txt:
+
+90 unique words (0.63%) to cover 50% all word instances in the document.
+
+2550 unique words (17.89%) to cover 90% all word instances in the document.
+
+#### How do you evaluate how many of the words come from foreign languages? 
+
+We use hunspell_check to filter the words which come from foreign langauges. hunspell_check consider foreign languages words as misspelled words.
+
+### Can you think of a way to increase the coverage -- identifying words that may not be in the corpora or using a smaller number of words in the dictionary to cover the same number of phrases?
+
+We can use a synonims dictionary to increase the corpus vocabulary.
