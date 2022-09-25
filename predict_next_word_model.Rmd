@@ -1,0 +1,104 @@
+---
+title: "Predict next word model"
+author: "Luis Talavera"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r echo=FALSE, message=FALSE}
+library(tidyverse)
+library(tidytext)
+library(R.utils)
+library(RColorBrewer)
+library(hunspell)
+source("./text_sampling.R")
+source("./get_text_data.R")
+source("./ngram_functions.R")
+```
+
+## Data loading and text sampling
+
+```{r data_loading}
+zip_url <- "https://d396qusza40orc.cloudfront.net/dsscapstone/dataset/Coursera-SwiftKey.zip"
+zip_file <- "Coursera-Swiftkey.zip"
+data_dir <- "./data/final"
+
+get_text_data(zip_url, zip_file, data_dir)
+```
+
+```{r text_sampling}
+lang_dir <- "/en_US/"
+file_name <- list(blogs = "en_US.blogs.txt",
+                  news = "en_US.news.txt",
+                  twitter = "en_US.twitter.txt")
+file_paths <- lapply(file_name, function(name) { paste0(data_dir,lang_dir, name) })
+
+sample_name <- lapply(file_name, function(name) { paste0("sample_", name) })
+sample_paths <- lapply(sample_name, function(name) { paste0(data_dir,lang_dir, name) })
+
+# Blogs data sampling
+if(!file.exists(paste0(data_dir,lang_dir,sample_name["blogs"]))) {
+  text_sampling(paste0(data_dir,lang_dir,file_name["blogs"]),
+              paste0(data_dir,lang_dir,sample_name["blogs"]))
+}
+
+# News data sampling
+if(!file.exists(paste0(data_dir,lang_dir,sample_name["news"]))) {
+  text_sampling(paste0(data_dir,lang_dir,file_name["news"]),
+              paste0(data_dir,lang_dir,sample_name["news"]))
+}
+
+# Twitter data sampling
+if(!file.exists(paste0(data_dir,lang_dir,sample_name["twitter"]))) {
+  text_sampling(paste0(data_dir,lang_dir,file_name["twitter"]),
+              paste0(data_dir,lang_dir,sample_name["twitter"]))
+}
+```
+
+
+## Data set building
+
+Create train, validation and test sets
+
+```{r data_set_building}
+data_blogs <- read_lines(sample_paths["blogs"])
+data_news <- read_lines(sample_paths["news"])
+data_twitter <- read_lines(sample_paths["twitter"])
+data <- c(data_blogs, data_news, data_twitter) # Merge blogs, news and twitter corpus
+
+total_lines <- countLines(sample_paths["blogs"]) + 
+  countLines(sample_paths["news"]) +
+  countLines(sample_paths["twitter"])
+
+
+index <- sample(seq(total_lines)) # Random permutation on 1 to total_lines
+train_limit <- round(0.6*total_lines)
+validation_limit <- round(0.8*total_lines)
+
+train <- data[1:train_limit]
+validation <- data[(train_limit+1):validation_limit]
+test <- data[(validation_limit+1):total_lines]
+```
+
+## Data cleaning and data pre-processing
+Steps to perform
+1. Split the raw text sentences into words
+2. Filter out punctuations.
+3. Convert all words to lowercase.
+4. Filter out profane words. 
+5. Filter out stop words? 
+
+
+```{r tokenization, warning=FALSE}
+ngram_data = list()
+ngram_data$unigram <- ngram_tokenizer(train, 1)
+ngram_data$bigram <- ngram_tokenizer(train, 2)
+ngram_data$trigram <- ngram_tokenizer(train, 3)
+```
+
+
