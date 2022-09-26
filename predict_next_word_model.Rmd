@@ -88,17 +88,115 @@ test <- data[(validation_limit+1):total_lines]
 ## Data cleaning and data pre-processing
 Steps to perform
 1. Split the raw text sentences into words
-2. Filter out punctuations.
+2. Filter out punctuation.
 3. Convert all words to lowercase.
 4. Filter out profane words. 
 5. Filter out stop words? 
 
 
 ```{r tokenization, warning=FALSE}
-ngram_data = list()
-ngram_data$unigram <- ngram_tokenizer(train, 1)
-ngram_data$bigram <- ngram_tokenizer(train, 2)
-ngram_data$trigram <- ngram_tokenizer(train, 3)
+data = list()
+data$unigram <- ngram_tokenizer(train, 1)
+data$bigram <- ngram_tokenizer(train, 2)
+data$trigram <- ngram_tokenizer(train, 3)
+```
+
+## Model building
+```{r model_building}
+dict <- unique(data$unigram) # Words in the data
+N <- length(data$unigram) # Number of tokens
+V <- length(dict) # Number of words in the vocabulary
+prune <- 2
+model <- list()
+
+# Calculate unigram log likelihood
+model$unigram <- tibble(data$unigram, 
+                        .name_repair = ~ c("word")) %>% # Create token tibble
+  count(word) %>% # Recreate tibble as absolute frequency table
+  arrange(desc(n)) # Order tibble by frequency
+
+colnames(model$unigram) <- c("word", "count")
+
+model$unigram <- model$unigram %>% add_row(word = "UNK", count = 0)
+model$unigram <- model$unigram %>% 
+  mutate(count = count + 1) %>% # Laplace Smoothing
+  mutate(MLE = log(count/(N+V))) 
+
+
+# Calculate bigram log likelihood
+model$bigram <- tibble(data$bigram, 
+                        .name_repair = ~ c("bigram")) %>% # Create token tibble
+  count(bigram) %>% # Recreate tibble as absolute frequency table
+  arrange(desc(n)) %>% # Order tibble by frequency
+  filter(n > prune)
+
+colnames(model$bigram) <- c("bigram", "count")
+
+word1 <- str_split(model$bigram$bigram, pattern = " ", simplify = TRUE)[, 1]
+word1_freqs <- numeric(length(word1))
+
+for (i in 1:length(word1)) {
+  word1_freqs[i] <- as.numeric(model$unigram[model$unigram$word == word1[i], 2])
+}
+
+model$bigram <- model$bigram %>% 
+  mutate(count = count + 1) %>% # Laplace Smoothing
+  mutate(MLE = log((count)/(word1_freqs+V))) 
+
+# Create bigrams for unknown words
+word1_freqs <- numeric(length(dict))
+
+for (i in 1:length(dict)) {
+  word1_freqs[i] <- as.numeric(model$unigram[model$unigram$word == dict[i], 2])
+}
+
+
+word1_unk <- tibble(bigram = paste(dict,"UNK"),
+                    count = 1)
+word1_unk <- word1_unk %>%
+  mutate(MLE = log(count/word1_freqs))
+
+UNK_word_MLE <- as.numeric(model$unigram[model$unigram$word == "UNK", 3])
+model$bigram <- model$bigram %>% add_row(word1_unk)
+model$bigram <- model$bigram %>% add_row(bigram = "UNK UNK",
+                                         count = 1,
+                                         MLE = UNK_word_freq)
+
+# Some bigrams first word does not appear in the dictionary
+model$bigram <- filter(model$bigram, !is.na(MLE)) 
+
+
+# Calculate trigram log likelihood
+model$trigram <- tibble(data$trigram, 
+                        .name_repair = ~ c("trigram")) %>% # Create token tibble
+  count(trigram) %>% # Recreate tibble as absolute frequency table
+  arrange(desc(n)) %>% # Order tibble by frequency
+  filter(n > prune)
+
+colnames(model$trigram) <- c("trigram", "count")
+
+words123 <- str_split(model$trigram$trigram, pattern = " ", simplify = TRUE)
+words12 <- str_c(words123[,1], words123[,2], sep = " ")
+
+words12_freqs <- numeric(length(words12))
+
+for (i in 1:length(words12)) {
+  words12_freqs[i] <- as.numeric(model$bigram[model$bigram$bigram == words12[i], 2])
+}
+
+# V2 <- length(unique(data$bigram))
+model$trigram <- model$trigram %>%
+  mutate(count = count + 1) %>% # Laplace Smoothing
+  mutate(MLE = log(count/(words12_freqs)))
+
+
+model$unigram <- model$unigram %>% arrange(desc(count))
+model$bigram <- model$bigram %>% arrange(desc(count))
+model$trigram <- model$trigram %>% arrange(desc(count))
+```
+
+```{r}
+print(ngram_predict("To all the mothers out there, wish you a Happy Mother's"))
 ```
 
 
