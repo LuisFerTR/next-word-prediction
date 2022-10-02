@@ -106,7 +106,7 @@ data$trigram <- ngram_tokenizer(train, 3)
 dict <- unique(data$unigram) # Words in the data
 N <- length(data$unigram) # Number of tokens
 V <- length(dict) # Number of words in the vocabulary
-prune <- 2
+prune <- 1
 model <- list()
 
 # Calculate unigram log likelihood
