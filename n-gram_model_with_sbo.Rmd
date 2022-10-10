@@ -1,0 +1,126 @@
+---
+title: "n-gram model with SBO"
+author: "Luis Talavera"
+date: '`r Sys.Date()`'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+```{r libraries}
+library("lexicon")
+library("sbo")
+library("tidyverse")
+source("./text_sampling.R")
+source("./get_text_data.R")
+```
+
+```{r data_loading}
+zip_url <- "https://d396qusza40orc.cloudfront.net/dsscapstone/dataset/Coursera-SwiftKey.zip"
+zip_file <- "Coursera-Swiftkey.zip"
+data_dir <- "./data/final"
+
+get_text_data(zip_url, zip_file, data_dir)
+```
+
+```{r text_sampling}
+lang_dir <- "/en_US/"
+file_name <- list(blogs = "en_US.blogs.txt",
+                  news = "en_US.news.txt",
+                  twitter = "en_US.twitter.txt")
+file_paths <- lapply(file_name, function(name) { paste0(data_dir,lang_dir, name) })
+
+sample_name <- lapply(file_name, function(name) { paste0("sample_", name) })
+sample_paths <- lapply(sample_name, function(name) { paste0(data_dir,lang_dir, name) })
+
+# Blogs data sampling
+if(!file.exists(paste0(data_dir,lang_dir,sample_name["blogs"]))) {
+  text_sampling(paste0(data_dir,lang_dir,file_name["blogs"]),
+              paste0(data_dir,lang_dir,sample_name["blogs"]))
+}
+
+# News data sampling
+if(!file.exists(paste0(data_dir,lang_dir,sample_name["news"]))) {
+  text_sampling(paste0(data_dir,lang_dir,file_name["news"]),
+              paste0(data_dir,lang_dir,sample_name["news"]))
+}
+
+# Twitter data sampling
+if(!file.exists(paste0(data_dir,lang_dir,sample_name["twitter"]))) {
+  text_sampling(paste0(data_dir,lang_dir,file_name["twitter"]),
+              paste0(data_dir,lang_dir,sample_name["twitter"]))
+}
+
+```
+
+```{r data_set_building}
+data_blogs <- read_lines(sample_paths["blogs"])
+data_news <- read_lines(sample_paths["news"])
+data_twitter <- read_lines(sample_paths["twitter"])
+data <- c(data_blogs, data_news, data_twitter) # Merge blogs, news and twitter corpus
+
+total_lines <- countLines(sample_paths["blogs"]) + 
+  countLines(sample_paths["news"]) +
+  countLines(sample_paths["twitter"])
+
+
+index <- sample(seq(total_lines)) # Random permutation on 1 to total_lines
+train_limit <- round(0.6*total_lines)
+validation_limit <- round(0.8*total_lines)
+
+train <- data[1:train_limit]
+validation <- data[(train_limit+1):validation_limit]
+test <- data[(validation_limit+1):total_lines]
+```
+
+```{r remove profane_words}
+profane_words <- profanity_alvarez # Lexicon package
+special_characters <- c(".", "+", "*", "?", "^", "$", "(", ")", 
+                        "[", "]", "{", "}", "|", "\\")
+patterns <- paste0("\\", special_characters)
+replacements <- paste0("\\\\", special_characters)
+
+# Pattern - Replacement maps
+pat_rep_map <- replacements
+names(pat_rep_map) <- patterns
+
+remove_pattern <- str_replace_all(profane_words, pat_rep_map) %>%
+  paste(collapse = "|")
+```
+
+
+```{r}
+clean_data <- function(input) {
+  str_to_lower(input) %>%
+  str_remove_all(remove_pattern) # remove profane words
+}
+
+dict <- sbo_dictionary(corpus = train, 
+                        max_size = 1000, 
+                        target = 0.75, 
+                        .preprocess = sbo::preprocess,
+                        EOS = ".?!:;")
+
+t4 <- sbo_predtable(object = train, # preloaded example dataset
+                   N = 4, # Train a 4-gram model
+                   dict = dict, # use more 1000 frequent words
+                   .preprocess = clean_data, # Preprocessing transformation 
+                   EOS = ".?!:;", # End-Of-Sentence tokens
+                   lambda = 0.4, # Back-off penalization in SBO algorithm
+                   L = 3L, # Number of predictions for input
+                   filtered = "<UNK>" # Exclude the <UNK> token from predictions
+                   )
+```
+
+```{r}
+p4 <- sbo_predictor(t4)
+```
+
+```{r}
+predict(p4, "To all the mothers out there, wish you a Happy Mother's")
+predict(p4, "Wish you a very Happy")
+```
+

@@ -111,13 +111,13 @@ ngram_predict <- function(text) {
     w2 <- tokens[L] 
   }
   
-  w3 <- dict
+  w3 <- model$unigram[["word"]]
   
   # Recursion case by case
   words123 <- str_c(w1, w2, w3, sep = " ")
   words12 <- str_c(w1, w2, sep = " ")
   words23 <- str_c(w2, w3, sep = " ")
-  all_words <- c(w3, "UNK")
+  all_words <- model$unigram[["word"]]
   
   # Trigram known
   tri_known <- model$trigram %>% filter(trigram %in% words123)
@@ -176,5 +176,5 @@ ngram_predict <- function(text) {
   predict_word <- as.character(best_result[, "possible_word"])
   predict_word
   
-  # TODO los if producen un error pero hay que revisar si hay opciones de bi23
+  # TODO los if producen un error pero hay que revisar si hay opciones en bi23
 }
