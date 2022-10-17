@@ -29,9 +29,31 @@ ui <- fillPage(
                                              value = "", width = "100%", 
                                              placeholder = "Enter text..."))),
     
+    
     uiOutput("predictions"),
     
     # fluidRow(column(3, textOutput("value")))
+    
+    
+    # tagList(
+    #   tags$head(
+    #     tags$style(HTML(
+    #       "html {
+    #          position: relative;
+    #          min-height: 100%;
+    #        }
+    #        body {
+    #          margin-bottom: 60px; /* Margin bottom by footer height */
+    #        }
+    #        .footer {
+    #          position: absolute;
+    #          bottom: 0;
+    #          width: 100%;
+    #          height: 60px; /* Set the fixed height of the footer here */
+    #          background-color: #f5f5f5;
+    #        }"))),
+    #   tags$footer("The footer.", class = "footer")
+    # )
 )
 
 # Define server logic 
@@ -53,7 +75,7 @@ server <- function(input, output) {
       words
     })
     
-    # output$value <- renderText({ predict_next_words() })
+    output$value <- renderText({ input$text == "" })
   
     
     output$predictions <- renderUI(
