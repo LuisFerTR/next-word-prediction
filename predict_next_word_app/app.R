@@ -8,6 +8,7 @@
 #
 
 library(shiny)
+library(tidyverse)
 library("sbo")
 library("devtools")
 source_url("https://raw.githubusercontent.com/LuisFerTR/next-word-prediction/main/predict_next_word_app/clean_data.R")
