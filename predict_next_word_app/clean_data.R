@@ -1,4 +1,5 @@
 library("lexicon")
+library("stringr")
 
 clean_data <- function(input) {
   profane_words <- profanity_alvarez # Lexicon package
